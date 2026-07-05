@@ -1,6 +1,6 @@
-import { ArrowLeft, Download, Loader2, Save } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { ArrowLeft, Code, Loader2, Save } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { PayloadFields, initialData } from "@/components/PayloadFields";
 import { QrPreview, type QrPreviewHandle } from "@/components/QrPreview";
 import { StyleControls } from "@/components/StyleControls";
@@ -11,13 +11,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Field, Input, Select } from "@/components/ui/field";
+import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { Tabs } from "@/components/ui/tabs";
 import { useQRCodes } from "@/lib/use-qrcodes";
 import {
   DEFAULT_STYLE,
   KIND_LABELS,
   formatPayload,
+  parsePayloadBack,
   type PayloadData,
   type QRKind,
   type QrStyleConfig,
@@ -27,8 +28,10 @@ import type { QRType } from "@/lib/types";
 const KINDS = Object.keys(KIND_LABELS) as QRKind[];
 
 export function Generator() {
+  const { id } = useParams();
+  const editId = id && id.length > 0 ? id : null;
   const navigate = useNavigate();
-  const { create } = useQRCodes();
+  const { qrcodes, create, update } = useQRCodes();
   const qrRef = useRef<QrPreviewHandle>(null);
 
   const [title, setTitle] = useState("");
@@ -45,20 +48,73 @@ export function Generator() {
   const [style, setStyle] = useState<QrStyleConfig>(DEFAULT_STYLE);
   const [tab, setTab] = useState("conteudo");
   const [saving, setSaving] = useState(false);
+  const [rawMode, setRawMode] = useState(false);
+  const [rawPayload, setRawPayload] = useState("");
+  const [loaded, setLoaded] = useState(!editId);
+
+  // Carrega QR existente em modo edição.
+  useEffect(() => {
+    if (!editId) return;
+    const qr = qrcodes.find((q) => q.id === editId);
+    if (!qr) {
+      // ainda carregando a lista
+      return;
+    }
+    setTitle(qr.title);
+    setKind(qr.kind as QRKind);
+    setTags(qr.tags.join(", "));
+    setQrType(qr.type);
+    setStyle({ ...DEFAULT_STYLE, ...(qr.styling as Partial<QrStyleConfig>) });
+    const parsed = parsePayloadBack(qr.kind as QRKind, qr.payload);
+    if (parsed) {
+      setDataByKind((prev) => ({ ...prev, [qr.kind]: parsed }));
+      setRawMode(false);
+    } else {
+      // tipo complexo: edita o payload bruto
+      setRawPayload(qr.payload);
+      setRawMode(true);
+    }
+    setLoaded(true);
+  }, [editId, qrcodes]);
 
   const data = dataByKind[kind];
   const payloadString = useMemo(
-    () => formatPayload(kind, data),
-    [kind, data],
+    () => (rawMode ? rawPayload : formatPayload(kind, data)),
+    [rawMode, rawPayload, kind, data],
   );
 
   const canSave = title.trim().length > 0 && payloadString.trim().length > 0;
+
+  const toggleRaw = (next: boolean) => {
+    if (next) {
+      setRawPayload(payloadString || formatPayload(kind, data));
+      setRawMode(true);
+    } else {
+      const parsed = parsePayloadBack(kind, rawPayload);
+      if (parsed) {
+        setDataByKind((prev) => ({ ...prev, [kind]: parsed }));
+        setRawMode(false);
+      } else {
+        // não dá pra converter — mantém bruto
+        setRawMode(true);
+      }
+    }
+  };
+
+  const onKindChange = (next: QRKind) => {
+    setKind(next);
+    // ao trocar o tipo fora do modo bruto, mantém o structured
+    const parsed = parsePayloadBack(next, payloadString);
+    if (parsed) {
+      setDataByKind((prev) => ({ ...prev, [next]: parsed }));
+    }
+  };
 
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
     try {
-      const id = await create({
+      const draft = {
         type: qrType,
         kind,
         title: title.trim(),
@@ -68,8 +124,14 @@ export function Generator() {
           .filter(Boolean),
         payload: payloadString,
         styling: style as unknown as Record<string, unknown>,
-      });
-      navigate(`/q/${id}`);
+      };
+      if (editId) {
+        await update(editId, draft);
+        navigate(`/q/${editId}`);
+      } else {
+        const newId = await create(draft);
+        navigate(`/q/${newId}`);
+      }
     } catch (e) {
       alert(e instanceof Error ? e.message : "Erro ao salvar.");
     } finally {
@@ -94,6 +156,14 @@ export function Generator() {
     pdf.save("qr-code.pdf");
   };
 
+  if (!loaded) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" /> Carregando QR...
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
       <div>
@@ -101,15 +171,16 @@ export function Generator() {
           variant="ghost"
           size="sm"
           className="mb-2 -ml-2"
-          onClick={() => navigate("/dashboard")}
+          onClick={() => navigate(editId ? `/q/${editId}` : "/dashboard")}
         >
           <ArrowLeft className="h-4 w-4" /> Voltar
         </Button>
-        <h1 className="text-2xl font-bold tracking-tight">Novo QR code</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {editId ? "Editar QR code" : "Novo QR code"}
+        </h1>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_minmax(280px,360px)]">
-        {/* Formulário */}
         <div className="space-y-4">
           <Card>
             <CardContent className="space-y-4 pt-6">
@@ -125,7 +196,8 @@ export function Generator() {
                 <Field label="Tipo de conteúdo">
                   <Select
                     value={kind}
-                    onChange={(e) => setKind(e.target.value as QRKind)}
+                    onChange={(e) => onKindChange(e.target.value as QRKind)}
+                    disabled={rawMode && editId ? false : false}
                   >
                     {KINDS.map((k) => (
                       <option key={k} value={k}>
@@ -164,13 +236,39 @@ export function Generator() {
               >
                 {tab === "conteudo" ? (
                   <div className="space-y-4">
-                    <PayloadFields
-                      kind={kind}
-                      data={data}
-                      onChange={(next) =>
-                        setDataByKind((prev) => ({ ...prev, [kind]: next }))
-                      }
-                    />
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={rawMode}
+                        onChange={(e) => toggleRaw(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-input"
+                      />
+                      <Code className="h-3.5 w-3.5" />
+                      Editar payload bruto (avançado)
+                    </label>
+
+                    {rawMode ? (
+                      <Field
+                        label="Payload bruto"
+                        hint="O texto exato codificado no QR."
+                      >
+                        <Textarea
+                          rows={6}
+                          value={rawPayload}
+                          onChange={(e) => setRawPayload(e.target.value)}
+                          className="font-mono text-xs"
+                        />
+                      </Field>
+                    ) : (
+                      <PayloadFields
+                        kind={kind}
+                        data={data}
+                        onChange={(next) =>
+                          setDataByKind((prev) => ({ ...prev, [kind]: next }))
+                        }
+                      />
+                    )}
+
                     <Field label="Tags" hint="Separadas por vírgula">
                       <Input
                         placeholder="pessoal, trabalho"
@@ -232,7 +330,7 @@ export function Generator() {
                   disabled={!payloadString}
                   onClick={exportPdf}
                 >
-                  <Download className="h-3.5 w-3.5" /> PDF
+                  PDF
                 </Button>
               </div>
 
@@ -247,7 +345,8 @@ export function Generator() {
                   </>
                 ) : (
                   <>
-                    <Save className="h-4 w-4" /> Salvar QR code
+                    <Save className="h-4 w-4" />
+                    {editId ? "Salvar alterações" : "Salvar QR code"}
                   </>
                 )}
               </Button>

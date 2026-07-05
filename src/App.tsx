@@ -40,6 +40,14 @@ export default function App() {
           }
         />
         <Route
+          path="/generator/:id"
+          element={
+            <Protected>
+              <Generator />
+            </Protected>
+          }
+        />
+        <Route
           path="/q/:id"
           element={
             <Protected>

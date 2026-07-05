@@ -237,3 +237,23 @@ export const EC_LABELS: Record<ErrorCorrection, string> = {
   Q: "Alta (~25%)",
   H: "Máxima (~30%)",
 };
+
+// ---------- parse reverso (para modo edição) ----------
+
+/**
+ * Tenta reconverter o payload codificado de volta nos campos estruturados.
+ * Só é trivial para URL e texto; demais tipos editam via payload bruto.
+ */
+export function parsePayloadBack(
+  kind: QRKind,
+  raw: string,
+): PayloadData | null {
+  switch (kind) {
+    case "url":
+      return { url: raw };
+    case "text":
+      return { text: raw };
+    default:
+      return null;
+  }
+}
