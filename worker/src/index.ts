@@ -193,6 +193,12 @@ async function route(request: Request, env: Env): Promise<Response> {
     return handleTokenExchange(request, env, cors);
   }
 
+  // Redirect público: /r/:id (quem escaneia o QR dinâmico cai aqui)
+  const redirectMatch = /^\/r\/([a-z0-9]{4,16})$/i.exec(path);
+  if (redirectMatch && request.method === "GET") {
+    return handleRedirect(redirectMatch[1], env, request);
+  }
+
   // Autenticados
   const user = await authenticate(request, env);
   if (!user) {
@@ -210,25 +216,191 @@ async function route(request: Request, env: Env): Promise<Response> {
     return handlePutMeta(request, env, cors);
   }
 
-  // QR codes
-  const qrMatch = /^\/api\/qrcodes\/([^/]+)$/.exec(path);
-  if (path === "/api/qrcodes" && request.method === "GET") {
-    return handleListQRCodes(env, cors);
-  }
-  if (path === "/api/qrcodes" && request.method === "POST") {
-    return handleCreateQRCode(request, env, cors);
-  }
-  if (qrMatch && request.method === "GET") {
-    return handleGetQRCode(qrMatch[1], env, cors);
-  }
-  if (qrMatch && request.method === "PUT") {
-    return handleUpdateQRCode(qrMatch[1], request, env, cors);
-  }
-  if (qrMatch && request.method === "DELETE") {
-    return handleDeleteQRCode(qrMatch[1], env, cors);
-  }
+    // QR codes
+    const qrMatch = /^\/api\/qrcodes\/([^/]+)$/.exec(path);
+    if (path === "/api/qrcodes" && request.method === "GET") {
+      return handleListQRCodes(env, cors);
+    }
+    if (path === "/api/qrcodes" && request.method === "POST") {
+      return handleCreateQRCode(request, env, cors);
+    }
+    if (qrMatch && request.method === "GET") {
+      return handleGetQRCode(qrMatch[1], env, cors);
+    }
+    if (qrMatch && request.method === "PUT") {
+      return handleUpdateQRCode(qrMatch[1], request, env, cors);
+    }
+    if (qrMatch && request.method === "DELETE") {
+      return handleDeleteQRCode(qrMatch[1], env, cors);
+    }
+
+    // Analytics de scans (autenticado)
+    const statsMatch = /^\/api\/stats\/([a-z0-9]{4,16})$/i.exec(path);
+    if (statsMatch && request.method === "GET") {
+      return handleStats(statsMatch[1], env, cors);
+    }
 
   return json({ error: "not_found", message: "Rota inexistente." }, { status: 404, cors });
+}
+
+// ---------- redirect público (/r/:id) ----------
+
+async function handleRedirect(
+  id: string,
+  env: Env,
+  request: Request,
+): Promise<Response> {
+  if (!ID_RE.test(id)) return htmlStatus(404, "QR code não encontrado");
+
+  const row = await env.DB.prepare("SELECT * FROM qrcodes WHERE id = ?")
+    .bind(id)
+    .first<QRRow>();
+
+  if (!row || row.type !== "dynamic") {
+    return htmlStatus(404, "QR code não encontrado");
+  }
+  if (row.deleted_at) {
+    return htmlStatus(410, "Este QR code foi excluído", "O dono desativou este link.");
+  }
+  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
+    return htmlStatus(410, "Este QR code expirou", "O prazo de validade acabou.");
+  }
+
+  // Registra o scan (best-effort; falha não quebram o redirect).
+  await logScan(env, id, request).catch(() => {});
+
+  const target = row.payload;
+  if (/^https?:\/\//i.test(target)) {
+    return new Response(null, {
+      status: 302,
+      headers: { Location: target, "Cache-Control": "no-store" },
+    });
+  }
+  // destino não-URL (raros em dinâmico): mostra landing com o conteúdo
+  return htmlLanding(target);
+}
+
+interface ScanEvent {
+  ts: string;
+  ua: string;
+  country: string | null;
+}
+
+async function logScan(env: Env, id: string, request: Request): Promise<void> {
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+
+  // total
+  const totalKey = `scans:${id}:total`;
+  const prevTotal = parseInt((await env.QR_ANALYTICS.get(totalKey)) || "0", 10);
+  await env.QR_ANALYTICS.put(totalKey, String(prevTotal + 1));
+
+  // diário (expira em 90 dias)
+  const dayKey = `scans:${id}:day:${day}`;
+  const prevDay = parseInt((await env.QR_ANALYTICS.get(dayKey)) || "0", 10);
+  await env.QR_ANALYTICS.put(dayKey, String(prevDay + 1), {
+    expirationTtl: 60 * 60 * 24 * 90,
+  });
+
+  // últimos 100 eventos
+  const recentKey = `scans:${id}:recent`;
+  const recentRaw = await env.QR_ANALYTICS.get(recentKey);
+  let recent: ScanEvent[] = [];
+  try {
+    recent = recentRaw ? (JSON.parse(recentRaw) as ScanEvent[]) : [];
+  } catch {
+    recent = [];
+  }
+  const cf = (request as Request & { cf?: { country?: string } }).cf;
+  recent.unshift({
+    ts: now.toISOString(),
+    ua: (request.headers.get("user-agent") || "").slice(0, 200),
+    country: cf?.country ?? null,
+  });
+  await env.QR_ANALYTICS.put(recentKey, JSON.stringify(recent.slice(0, 100)));
+}
+
+async function handleStats(
+  id: string,
+  env: Env,
+  cors: Record<string, string>,
+): Promise<Response> {
+  if (!ID_RE.test(id)) return json({ error: "invalid_id" }, { status: 400, cors });
+  const [totalRaw, recentRaw] = await Promise.all([
+    env.QR_ANALYTICS.get(`scans:${id}:total`),
+    env.QR_ANALYTICS.get(`scans:${id}:recent`),
+  ]);
+  const recent: ScanEvent[] = recentRaw ? safeParse(recentRaw, []) : [];
+  return json(
+    {
+      total: parseInt(totalRaw || "0", 10),
+      recent,
+      lastScan: recent[0]?.ts ?? null,
+    },
+    { cors },
+  );
+}
+
+// ---------- páginas HTML (redirect inativo/não encontrado) ----------
+
+function htmlStatus(
+  status: number,
+  title: string,
+  subtitle?: string,
+): Response {
+  return new Response(renderHtml(title, subtitle ?? ""), {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+function htmlLanding(content: string): Response {
+  return new Response(renderLanding(content), {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+function renderHtml(title: string, subtitle: string): string {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title>
+<style>
+  :root{color-scheme:light dark}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+       font-family:system-ui,-apple-system,sans-serif;padding:1.5rem;text-align:center;
+       background:#0f172a;color:#e2e8f0}
+  .card{max-width:420px}
+  .icon{width:64px;height:64px;margin:0 auto 1rem;border-radius:16px;
+        background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:32px}
+  h1{font-size:1.5rem;margin:0 0 .5rem}
+  p{color:#94a3b8;margin:0}
+</style></head>
+<body><div class="card">
+  <div class="icon">⚠️</div>
+  <h1>${title}</h1>
+  ${subtitle ? `<p>${subtitle}</p>` : ""}
+</div></body></html>`;
+}
+
+function renderLanding(content: string): string {
+  const safe = content
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Conteúdo do QR</title>
+<style>
+  :root{color-scheme:light dark}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+       font-family:system-ui,-apple-system,sans-serif;padding:1.5rem;text-align:center;
+       background:#0f172a;color:#e2e8f0}
+  pre{white-space:pre-wrap;word-break:break-all;background:#1e293b;padding:1rem;border-radius:8px}
+</style></head><body><main style="max-width:480px">
+  <h1>Conteúdo</h1>
+  <pre>${safe}</pre>
+</main></body></html>`;
 }
 
 // ---------- token exchange ----------

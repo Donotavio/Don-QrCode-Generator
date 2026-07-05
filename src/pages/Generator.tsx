@@ -1,4 +1,4 @@
-import { ArrowLeft, Code, Loader2, Save } from "lucide-react";
+import { ArrowLeft, Code, Info, Loader2, Save } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { PayloadFields, initialData } from "@/components/PayloadFields";
@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { Tabs } from "@/components/ui/tabs";
-import { useQRCodes } from "@/lib/use-qrcodes";
+import { generateId } from "@/lib/crypto";
+import { useQRCodes, dynamicRedirectUrl } from "@/lib/use-qrcodes";
 import {
   DEFAULT_STYLE,
   KIND_LABELS,
@@ -51,6 +52,7 @@ export function Generator() {
   const [rawMode, setRawMode] = useState(false);
   const [rawPayload, setRawPayload] = useState("");
   const [loaded, setLoaded] = useState(!editId);
+  const [dynamicId, setDynamicId] = useState(() => generateId());
 
   // Carrega QR existente em modo edição.
   useEffect(() => {
@@ -65,23 +67,34 @@ export function Generator() {
     setTags(qr.tags.join(", "));
     setQrType(qr.type);
     setStyle({ ...DEFAULT_STYLE, ...(qr.styling as Partial<QrStyleConfig>) });
-    const parsed = parsePayloadBack(qr.kind as QRKind, qr.payload);
-    if (parsed) {
-      setDataByKind((prev) => ({ ...prev, [qr.kind]: parsed }));
+    if (qr.type === "dynamic") {
+      setDynamicId(qr.id);
+      // destino do redirect (texto puro) → campo de URL
+      setDataByKind((prev) => ({ ...prev, url: { url: qr.payload } }));
+      setKind("url");
       setRawMode(false);
     } else {
-      // tipo complexo: edita o payload bruto
-      setRawPayload(qr.payload);
-      setRawMode(true);
+      const parsed = parsePayloadBack(qr.kind as QRKind, qr.payload);
+      if (parsed) {
+        setDataByKind((prev) => ({ ...prev, [qr.kind]: parsed }));
+        setRawMode(false);
+      } else {
+        setRawPayload(qr.payload);
+        setRawMode(true);
+      }
     }
     setLoaded(true);
   }, [editId, qrcodes]);
 
   const data = dataByKind[kind];
+  const effectiveKind: QRKind = qrType === "dynamic" ? "url" : kind;
   const payloadString = useMemo(
-    () => (rawMode ? rawPayload : formatPayload(kind, data)),
-    [rawMode, rawPayload, kind, data],
+    () => (rawMode ? rawPayload : formatPayload(effectiveKind, data)),
+    [rawMode, rawPayload, effectiveKind, data],
   );
+  // QR dinâmico codifica a URL curta de redirect; estático codifica o payload.
+  const encodedString =
+    qrType === "dynamic" ? dynamicRedirectUrl(dynamicId) : payloadString;
 
   const canSave = title.trim().length > 0 && payloadString.trim().length > 0;
 
@@ -115,8 +128,9 @@ export function Generator() {
     setSaving(true);
     try {
       const draft = {
+        ...(qrType === "dynamic" ? { id: dynamicId } : {}),
         type: qrType,
-        kind,
+        kind: effectiveKind,
         title: title.trim(),
         tags: tags
           .split(",")
@@ -195,9 +209,9 @@ export function Generator() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Tipo de conteúdo">
                   <Select
-                    value={kind}
+                    value={effectiveKind}
                     onChange={(e) => onKindChange(e.target.value as QRKind)}
-                    disabled={rawMode && editId ? false : false}
+                    disabled={qrType === "dynamic"}
                   >
                     {KINDS.map((k) => (
                       <option key={k} value={k}>
@@ -208,19 +222,34 @@ export function Generator() {
                 </Field>
                 <Field
                   label="Tipo do QR"
-                  hint="Dinâmico = URL curta (redirecionável). Em breve."
+                  hint="Dinâmico = URL curta redirecionável (editável/exclusão real)."
                 >
                   <Select
                     value={qrType}
                     onChange={(e) => setQrType(e.target.value as QRType)}
                   >
-                    <option value="static">Estático</option>
-                    <option value="dynamic" disabled>
-                      Dinâmico (em breve)
-                    </option>
+                    <option value="static">Estático (imutável)</option>
+                    <option value="dynamic">Dinâmico (redirecionável)</option>
                   </Select>
                 </Field>
               </div>
+              {qrType === "dynamic" && (
+                <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  <div className="space-y-1">
+                    <p className="font-medium text-primary">QR Dinâmico</p>
+                    <p className="text-muted-foreground">
+                      O QR codifica uma URL curta sua. O destino fica no
+                      servidor (texto puro) e pode ser excluído depois — quem
+                      escanear após a exclusão verá "QR inativo". Tipo fixo em
+                      URL.
+                    </p>
+                    <p className="break-all font-mono text-[11px] text-muted-foreground">
+                      {dynamicRedirectUrl(dynamicId)}
+                    </p>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -293,16 +322,18 @@ export function Generator() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-lg border bg-white p-4">
-                <QrPreview ref={qrRef} data={payloadString} style={style} size={240} />
+                <QrPreview ref={qrRef} data={encodedString} style={style} size={240} />
               </div>
 
-              {payloadString && (
+              {encodedString && (
                 <details className="rounded-md border p-2 text-xs">
                   <summary className="cursor-pointer text-muted-foreground">
-                    Conteúdo codificado
+                    {qrType === "dynamic"
+                      ? "URL curta codificada no QR"
+                      : "Conteúdo codificado"}
                   </summary>
                   <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-all text-muted-foreground">
-                    {payloadString}
+                    {encodedString}
                   </pre>
                 </details>
               )}

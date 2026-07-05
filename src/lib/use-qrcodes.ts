@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type QRDTO, type QRInput } from "@/lib/api";
 import { generateId } from "@/lib/crypto";
+import { CONFIG } from "@/lib/config";
 import { useAuth } from "@/lib/auth";
 import { useCrypto } from "@/lib/crypto-context";
 
@@ -17,10 +18,20 @@ export interface QRDraft {
   expiresAt?: string | null;
 }
 
-/** QR code com payload já decifrado (para exibição). */
+/** QR code com payload já legível (decifrado p/ estáticos; texto puro p/ dinâmicos). */
 export interface DecryptedQR extends Omit<QRDTO, "payload"> {
   payload: string;
   decryptError?: boolean;
+}
+
+/** URL curta que um QR dinâmico codifica (e que o Worker redireciona). */
+export function dynamicRedirectUrl(id: string): string {
+  return `${CONFIG.WORKER_URL}/r/${id}`;
+}
+
+/** String que deve ser codificada na imagem do QR. */
+export function qrEncodedString(qr: { type: string; id: string; payload: string }): string {
+  return qr.type === "dynamic" ? dynamicRedirectUrl(qr.id) : qr.payload;
 }
 
 export function useQRCodes() {
@@ -39,7 +50,9 @@ export function useQRCodes() {
     try {
       const { qrcodes: rows } = await api.listQRCodes(token);
       const decrypted: DecryptedQR[] = await Promise.all(
-        rows.map(async (r) => {
+        rows.map(async (r): Promise<DecryptedQR> => {
+          // Dinâmicos guardam o destino em texto puro (necessário pro redirect).
+          if (r.type === "dynamic") return { ...r, payload: r.payload };
           try {
             if (cryptoStatus !== "unlocked") return { ...r, payload: "", decryptError: true };
             const payload = await decrypt(r.payload);
@@ -61,48 +74,48 @@ export function useQRCodes() {
     if (ready) refresh();
   }, [ready, refresh]);
 
-  const create = useCallback(
-    async (draft: QRDraft): Promise<string> => {
+  /** Cifra o payload se for estático; dinâmico fica em texto puro. */
+  const prepareInput = useCallback(
+    async (draft: QRDraft): Promise<{ id: string; input: QRInput }> => {
       if (!token) throw new Error("not_authenticated");
       const id = draft.id || generateId();
-      const ciphertext = await encrypt(draft.payload);
-      const input: QRInput = {
+      const isDynamic = draft.type === "dynamic";
+      const storedPayload = isDynamic ? draft.payload : await encrypt(draft.payload);
+      return {
         id,
-        type: draft.type,
-        kind: draft.kind,
-        title: draft.title,
-        tags: draft.tags,
-        payload: ciphertext,
-        styling: draft.styling,
-        passwordHash: draft.passwordHash ?? null,
-        expiresAt: draft.expiresAt ?? null,
+        input: {
+          id,
+          type: draft.type,
+          kind: draft.kind,
+          title: draft.title,
+          tags: draft.tags,
+          payload: storedPayload,
+          styling: draft.styling,
+          passwordHash: draft.passwordHash ?? null,
+          expiresAt: draft.expiresAt ?? null,
+        },
       };
-      await api.createQRCode(token, input);
+    },
+    [token, encrypt],
+  );
+
+  const create = useCallback(
+    async (draft: QRDraft): Promise<string> => {
+      const { id, input } = await prepareInput(draft);
+      await api.createQRCode(token!, input);
       await refresh();
       return id;
     },
-    [token, encrypt, refresh],
+    [token, prepareInput, refresh],
   );
 
   const update = useCallback(
     async (id: string, draft: QRDraft): Promise<void> => {
-      if (!token) throw new Error("not_authenticated");
-      const ciphertext = await encrypt(draft.payload);
-      const input: QRInput = {
-        id,
-        type: draft.type,
-        kind: draft.kind,
-        title: draft.title,
-        tags: draft.tags,
-        payload: ciphertext,
-        styling: draft.styling,
-        passwordHash: draft.passwordHash ?? null,
-        expiresAt: draft.expiresAt ?? null,
-      };
-      await api.updateQRCode(token, id, input);
+      const { input } = await prepareInput({ ...draft, id });
+      await api.updateQRCode(token!, id, input);
       await refresh();
     },
-    [token, encrypt, refresh],
+    [token, prepareInput, refresh],
   );
 
   const remove = useCallback(

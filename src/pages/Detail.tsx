@@ -9,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { useQRCodes } from "@/lib/use-qrcodes";
+import { useQRCodes, qrEncodedString } from "@/lib/use-qrcodes";
 import { DEFAULT_STYLE, KIND_LABELS, type QrStyleConfig } from "@/lib/qr-builder";
 
 export function Detail() {
@@ -85,7 +85,7 @@ export function Detail() {
         <Card>
           <CardContent className="flex justify-center pt-6">
             <div className="rounded-lg border bg-white p-4">
-              <QrPreview ref={qrRef} data={qr.payload} style={style} size={280} />
+              <QrPreview ref={qrRef} data={qrEncodedString(qr)} style={style} size={280} />
             </div>
           </CardContent>
         </Card>
@@ -97,7 +97,15 @@ export function Detail() {
           <CardContent className="space-y-4">
             <div>
               <p className="mb-1 text-xs font-medium text-muted-foreground">
-                Conteúdo codificado
+                {qr.type === "dynamic" ? "URL curta (codificada no QR)" : "Conteúdo codificado"}
+              </p>
+              {qr.type === "dynamic" && (
+                <pre className="mb-2 overflow-auto whitespace-pre-wrap break-all rounded-md bg-primary/5 p-2 font-mono text-xs text-primary">
+                  {qrEncodedString(qr)}
+                </pre>
+              )}
+              <p className="mb-1 text-xs font-medium text-muted-foreground">
+                {qr.type === "dynamic" ? "Destino do redirect" : "Conteúdo"}
               </p>
               <div className="flex items-start gap-2">
                 <pre className="max-h-32 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
