@@ -5,14 +5,12 @@
 export const CONFIG = {
   /** Username GitHub autorizado a acessar o painel (allowlist). */
   ALLOWED_USERNAME: "Donotavio",
-  /** Repo onde os dados são persistidos (Contents API). */
+  /** Repo (apenas para referência; os dados vivem no D1, não no repo). */
   OWNER: "Donotavio",
   REPO: "Don-QrCode-Generator",
-  DATA_BRANCH: "main",
-  DATA_PATH: "data/qrcodes.json",
   /**
    * URL base do Cloudflare Worker.
-   * Responsável por: proxy OAuth, /r/:id redirect, /stats.
+   * Responsável por: proxy OAuth, CRUD /api/qrcodes, /api/meta, /r/:id, /stats.
    */
   WORKER_URL: "https://don-qr.ribeitemp.workers.dev",
   /** App client ID da OAuth App (público). */
