@@ -3,15 +3,21 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 account_id = "2d93944671f7b906cdca409ca4abb6c0"
 
-# Secrets (NÃO commitar os valores — definir via `wrangler secret put`):
-#   GITHUB_CLIENT_SECRET  -> secret da OAuth App
-#   ALLOWED_USERNAME      -> "Donotavio"  (re-validado no cliente também)
-#   KV namespace id é injetado abaixo.
+# Secrets (definidos via `wrangler secret put`, NÃO commitados):
+#   GITHUB_CLIENT_ID       -> Ov23liMqjy2lkoF4XF4a
+#   GITHUB_CLIENT_SECRET   -> secret da OAuth App
+#   ALLOWED_USERNAME       -> Donotavio
 
-# Obs.: o id do KV será preenchido após `wrangler kv:namespace create QR_ANALYTICS`.
+# D1 (SQLite na edge) — armazena os QR codes.
+[[d1_databases]]
+binding = "DB"
+database_name = "don-qr-db"
+database_id = "3e5c0854-84a5-482c-a229-767a11e270f7"
+
+# KV — analytics de scans dos QRs dinâmicos.
 [[kv_namespaces]]
 binding = "QR_ANALYTICS"
-id = "COLOQUE_O_KV_ID_AQUI"
+id = "02789ad0119a47d78f12987b730ed9f6"
 
 # CORS: origins permitidos (produção + dev local).
 [vars]
