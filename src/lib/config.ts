@@ -7,17 +7,21 @@ export const CONFIG = {
   ALLOWED_USERNAME: "Donotavio",
   /** Repo onde os dados são persistidos (Contents API). */
   OWNER: "Donotavio",
-  REPO: "don_qr_code_gen",
+  REPO: "Don-QrCode-Generator",
   DATA_BRANCH: "main",
   DATA_PATH: "data/qrcodes.json",
   /**
-   * URL base do Cloudflare Worker (definida na Fase 2).
+   * URL base do Cloudflare Worker.
    * Responsável por: proxy OAuth, /r/:id redirect, /stats.
    */
-  WORKER_URL: "https://don-qr.donotavio.workers.dev",
-  /** App client ID da OAuth App (público, criado na Fase 2). */
-  OAUTH_CLIENT_ID: "",
+  WORKER_URL: "https://don-qr.ribeitemp.workers.dev",
+  /** App client ID da OAuth App (público). */
+  OAUTH_CLIENT_ID: "Ov23liMqjy2lkoF4XF4a",
+  /** Scopes solicitados: public_repo (write em repo público) + read:user. */
+  OAUTH_SCOPES: "public_repo read:user",
 } as const;
 
 /** URL base do site no GitHub Pages. */
-export const SITE_URL = `https://${CONFIG.OWNER}.github.io/${CONFIG.REPO}/`;
+export const SITE_URL = `https://${CONFIG.OWNER.toLowerCase()}.github.io/${CONFIG.REPO}/`;
+/** Redirect URI registrada na OAuth App (raiz do site). */
+export const OAUTH_REDIRECT_URI = SITE_URL;

@@ -1,11 +1,19 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
-import { Callback } from "@/pages/Callback";
+import { RequireAuth } from "@/components/RequireAuth";
 import { Dashboard } from "@/pages/Dashboard";
 import { Detail } from "@/pages/Detail";
 import { Generator } from "@/pages/Generator";
 import { Login } from "@/pages/Login";
 import { NotFound } from "@/pages/NotFound";
+
+function Protected({ children }: { children: React.ReactNode }) {
+  return (
+    <RequireAuth>
+      <AppShell>{children}</AppShell>
+    </RequireAuth>
+  );
+}
 
 export default function App() {
   return (
@@ -13,44 +21,36 @@ export default function App() {
       <Routes>
         {/* Fluxo público */}
         <Route path="/login" element={<Login />} />
-        <Route path="/callback" element={<Callback />} />
 
-        {/* Fluxo autenticado (guard real chega na Fase 2) */}
+        {/* Fluxo autenticado */}
         <Route
           path="/dashboard"
           element={
-            <AppShell>
+            <Protected>
               <Dashboard />
-            </AppShell>
+            </Protected>
           }
         />
         <Route
           path="/generator"
           element={
-            <AppShell>
+            <Protected>
               <Generator />
-            </AppShell>
+            </Protected>
           }
         />
         <Route
           path="/q/:id"
           element={
-            <AppShell>
+            <Protected>
               <Detail />
-            </AppShell>
+            </Protected>
           }
         />
 
         {/* Defaults */}
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route
-          path="*"
-          element={
-            <AppShell>
-              <NotFound />
-            </AppShell>
-          }
-        />
+        <Route path="*" element={<Protected><NotFound /></Protected>} />
       </Routes>
     </HashRouter>
   );

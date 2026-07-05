@@ -6,8 +6,9 @@ import path from 'node:path'
 // https://vite.dev/config/
 export default defineConfig({
   // Base path para GitHub Pages project site.
+  // Deve bater com o nome do repo no GitHub.
   // Se futuramente usar domínio próprio, mude para '/'.
-  base: '/don_qr_code_gen/',
+  base: '/Don-QrCode-Generator/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
