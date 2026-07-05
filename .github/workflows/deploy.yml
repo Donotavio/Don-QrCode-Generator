@@ -48,6 +48,26 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages (tentativa 1)
+        id: d1
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Esperar
+        if: steps.d1.outcome == 'failure'
+        run: sleep 30
+
+      - name: Deploy to GitHub Pages (tentativa 2)
+        id: d2
+        uses: actions/deploy-pages@v4
+        if: steps.d1.outcome == 'failure'
+        continue-on-error: true
+
+      - name: Esperar
+        if: steps.d1.outcome == 'failure' && steps.d2.outcome == 'failure'
+        run: sleep 30
+
+      - name: Deploy to GitHub Pages (tentativa 3 — final)
         id: deployment
         uses: actions/deploy-pages@v4
+        if: steps.d2.outcome != 'success'
