@@ -397,6 +397,12 @@ async function handleCreateQRCode(
     if (/UNIQUE constraint/i.test(msg)) {
       return json({ error: "id_conflict", message: "Já existe um QR com este id." }, { status: 409, cors });
     }
+    if (/too big|TOOBIG/i.test(msg)) {
+      return json(
+        { error: "payload_too_large", message: "Conteúdo ou logo grandes demais. Reduza o logo (máx ~200px)." },
+        { status: 413, cors },
+      );
+    }
     return json({ error: "db_error", message: msg }, { status: 500, cors });
   }
 
@@ -479,8 +485,14 @@ async function readQRBody(
   if (!body.kind || typeof body.kind !== "string") return { error: "invalid_kind" };
   if (typeof body.title !== "string" || body.title.length > 200) return { error: "invalid_title" };
   if (typeof body.payload !== "string" || body.payload.length === 0) return { error: "invalid_payload" };
+  if (body.payload.length > 500_000) return { error: "payload_too_large" };
   if (!Array.isArray(body.tags)) return { error: "invalid_tags" };
   if (typeof body.styling !== "object" || body.styling === null) return { error: "invalid_styling" };
+  try {
+    if (JSON.stringify(body.styling).length > 500_000) return { error: "payload_too_large" };
+  } catch {
+    return { error: "invalid_styling" };
+  }
 
   return {
     data: {

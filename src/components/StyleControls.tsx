@@ -1,5 +1,5 @@
 import { Upload, X } from "lucide-react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Field, Input, Select } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,6 +7,7 @@ import {
   EC_LABELS,
   type QrStyleConfig,
 } from "@/lib/qr-builder";
+import { resizeImageToDataUrl } from "@/lib/image";
 import type { DotStyle, ErrorCorrection } from "@/lib/types";
 
 interface StyleControlsProps {
@@ -16,13 +17,22 @@ interface StyleControlsProps {
 
 export function StyleControls({ style, onChange }: StyleControlsProps) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
   const set = (patch: Partial<QrStyleConfig>) => onChange({ ...style, ...patch });
 
-  const onLogo = (file: File | null) => {
+  const onLogo = async (file: File | null) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => set({ logo: reader.result as string });
-    reader.readAsDataURL(file);
+    setLogoBusy(true);
+    try {
+      // Redimensiona para no máximo 200px antes de armazenar — evita
+      // estourar o limite do D1 com base64 de megabytes.
+      const dataUrl = await resizeImageToDataUrl(file, 200);
+      set({ logo: dataUrl });
+    } catch {
+      alert("Não foi possível processar a imagem. Tente um PNG/JPG menor.");
+    } finally {
+      setLogoBusy(false);
+    }
   };
 
   return (
@@ -128,8 +138,9 @@ export function StyleControls({ style, onChange }: StyleControlsProps) {
             variant="outline"
             size="sm"
             onClick={() => fileRef.current?.click()}
+            disabled={logoBusy}
           >
-            <Upload className="h-4 w-4" /> Enviar imagem
+            <Upload className="h-4 w-4" /> {logoBusy ? "Processando..." : "Enviar imagem"}
           </Button>
         )}
         <input
