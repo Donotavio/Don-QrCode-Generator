@@ -1,4 +1,4 @@
-import { ArrowLeft, Code, Info, Loader2, Save } from "lucide-react";
+import { ArrowLeft, Code, Info, Loader2, Save, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { PayloadFields, initialData } from "@/components/PayloadFields";
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { Tabs } from "@/components/ui/tabs";
-import { generateId } from "@/lib/crypto";
+import { generateId, hashPassword } from "@/lib/crypto";
 import { useQRCodes, dynamicRedirectUrl } from "@/lib/use-qrcodes";
 import {
   DEFAULT_STYLE,
@@ -53,6 +53,10 @@ export function Generator() {
   const [rawPayload, setRawPayload] = useState("");
   const [loaded, setLoaded] = useState(!editId);
   const [dynamicId, setDynamicId] = useState(() => generateId());
+  const [expiresAt, setExpiresAt] = useState("");
+  const [hasPassword, setHasPassword] = useState(false);
+  const [password, setPassword] = useState("");
+  const [existingPasswordHash, setExistingPasswordHash] = useState<string | null>(null);
 
   // Carrega QR existente em modo edição.
   useEffect(() => {
@@ -73,6 +77,10 @@ export function Generator() {
       setDataByKind((prev) => ({ ...prev, url: { url: qr.payload } }));
       setKind("url");
       setRawMode(false);
+      setExpiresAt(qr.expiresAt ? qr.expiresAt.slice(0, 16) : "");
+      setExistingPasswordHash(qr.passwordHash);
+      setHasPassword(false);
+      setPassword("");
     } else {
       const parsed = parsePayloadBack(qr.kind as QRKind, qr.payload);
       if (parsed) {
@@ -127,6 +135,15 @@ export function Generator() {
     if (!canSave) return;
     setSaving(true);
     try {
+      // Resolve senha (dinâmico): nova, mantida ou nenhuma.
+      let passwordHash: string | null = null;
+      if (qrType === "dynamic") {
+        if (hasPassword && password) {
+          passwordHash = await hashPassword(password);
+        } else if (editId && existingPasswordHash) {
+          passwordHash = existingPasswordHash;
+        }
+      }
       const draft = {
         ...(qrType === "dynamic" ? { id: dynamicId } : {}),
         type: qrType,
@@ -138,6 +155,11 @@ export function Generator() {
           .filter(Boolean),
         payload: payloadString,
         styling: style as unknown as Record<string, unknown>,
+        passwordHash,
+        expiresAt:
+          qrType === "dynamic" && expiresAt
+            ? new Date(expiresAt).toISOString()
+            : null,
       };
       if (editId) {
         await update(editId, draft);
@@ -234,19 +256,59 @@ export function Generator() {
                 </Field>
               </div>
               {qrType === "dynamic" && (
-                <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
-                  <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  <div className="space-y-1">
-                    <p className="font-medium text-primary">QR Dinâmico</p>
-                    <p className="text-muted-foreground">
-                      O QR codifica uma URL curta sua. O destino fica no
-                      servidor (texto puro) e pode ser excluído depois — quem
-                      escanear após a exclusão verá "QR inativo". Tipo fixo em
-                      URL.
-                    </p>
-                    <p className="break-all font-mono text-[11px] text-muted-foreground">
-                      {dynamicRedirectUrl(dynamicId)}
-                    </p>
+                <div className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
+                  <div className="flex items-start gap-2">
+                    <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <div className="space-y-1">
+                      <p className="font-medium text-primary">QR Dinâmico</p>
+                      <p className="text-muted-foreground">
+                        O QR codifica uma URL curta sua. O destino fica no
+                        servidor (texto puro) e pode ser excluído depois — quem
+                        escaneia após a exclusão verá "QR inativo". Tipo fixo em
+                        URL.
+                      </p>
+                      <p className="break-all font-mono text-[11px] text-muted-foreground">
+                        {dynamicRedirectUrl(dynamicId)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field
+                      label="Validade (opcional)"
+                      hint="Após esta data, o redirect vira 410."
+                    >
+                      <Input
+                        type="datetime-local"
+                        value={expiresAt}
+                        onChange={(e) => setExpiresAt(e.target.value)}
+                      />
+                    </Field>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2 font-medium">
+                        <input
+                          type="checkbox"
+                          checked={hasPassword}
+                          onChange={(e) => setHasPassword(e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-input"
+                        />
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        Exigir senha
+                      </label>
+                      {hasPassword && (
+                        <Input
+                          type="password"
+                          placeholder="Senha de acesso"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                        />
+                      )}
+                      {!hasPassword && editId && existingPasswordHash && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Já tem senha. Marque para trocar.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

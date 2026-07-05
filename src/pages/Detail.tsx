@@ -1,5 +1,5 @@
-import { ArrowLeft, Copy, Download, Loader2, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { ArrowLeft, Clock, Copy, Download, KeyRound, Loader2, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { QrPreview, type QrPreviewHandle } from "@/components/QrPreview";
 import { Button } from "@/components/ui/button";
@@ -9,17 +9,92 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { useQRCodes, qrEncodedString } from "@/lib/use-qrcodes";
 import { DEFAULT_STYLE, KIND_LABELS, type QrStyleConfig } from "@/lib/qr-builder";
+
+interface Stats {
+  total: number;
+  recent: { ts: string; ua: string; country: string | null }[];
+  lastScan: string | null;
+}
+
+const COUNTRY_FLAGS: Record<string, string> = {
+  BR: "🇧🇷", US: "🇺🇸", PT: "🇵🇹", AR: "🇦🇷", GB: "🇬🇧", DE: "🇩🇪", FR: "🇫🇷",
+  ES: "🇪🇸", IT: "🇮🇹", JP: "🇯🇵", CN: "🇨🇳", CA: "🇨🇦", MX: "🇲🇽",
+};
+
+function flag(country: string | null): string {
+  if (!country) return "🌍";
+  return COUNTRY_FLAGS[country] ?? country;
+}
+
+function relTime(iso: string | null): string {
+  if (!iso) return "nunca";
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "agora";
+  if (m < 60) return `${m} min atrás`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} h atrás`;
+  const d = Math.floor(h / 24);
+  return `${d} d atrás`;
+}
+
+/** Bucket dos últimos 14 dias a partir dos eventos recentes. */
+function dailyBuckets(recent: Stats["recent"]): { day: string; label: string; count: number }[] {
+  const days: { day: string; label: string; count: number }[] = [];
+  const today = new Date();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    days.push({ day: key, label: `${d.getDate()}/${d.getMonth() + 1}`, count: 0 });
+  }
+  const map = new Map(days.map((d) => [d.day, d]));
+  for (const ev of recent) {
+    const key = ev.ts.slice(0, 10);
+    const bucket = map.get(key);
+    if (bucket) bucket.count++;
+  }
+  return days;
+}
 
 export function Detail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { token } = useAuth();
   const { qrcodes, loading, remove } = useQRCodes();
   const qrRef = useRef<QrPreviewHandle>(null);
   const [confirming, setConfirming] = useState(false);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const qr = qrcodes.find((q) => q.id === id);
+
+  useEffect(() => {
+    if (!token || !qr || qr.type !== "dynamic") {
+      setStats(null);
+      return;
+    }
+    let cancelled = false;
+    setStatsLoading(true);
+    api
+      .getStats(token, qr.id)
+      .then((s) => {
+        if (!cancelled) setStats(s as Stats);
+      })
+      .catch(() => {
+        if (!cancelled) setStats(null);
+      })
+      .finally(() => {
+        if (!cancelled) setStatsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, qr]);
 
   if (loading) {
     return (
@@ -74,6 +149,26 @@ export function Detail() {
               {qr.type === "dynamic" ? "Dinâmico" : "Estático"} ·{" "}
               {new Date(qr.createdAt).toLocaleDateString("pt-BR")}
             </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {qr.passwordHash && (
+                <Badge icon={<KeyRound className="h-3 w-3" />} label="Com senha" tone="primary" />
+              )}
+              {qr.expiresAt && (
+                <Badge
+                  icon={<Clock className="h-3 w-3" />}
+                  label={
+                    new Date(qr.expiresAt).getTime() < Date.now()
+                      ? `Expirou ${new Date(qr.expiresAt).toLocaleDateString("pt-BR")}`
+                      : `Validade ${new Date(qr.expiresAt).toLocaleDateString("pt-BR")}`
+                  }
+                  tone={
+                    qr.expiresAt && new Date(qr.expiresAt).getTime() < Date.now()
+                      ? "destructive"
+                      : "muted"
+                  }
+                />
+              )}
+            </div>
           </div>
           <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
             #{qr.id}
@@ -178,6 +273,130 @@ export function Detail() {
           </CardContent>
         </Card>
       </div>
+
+      {qr.type === "dynamic" && (
+        <AnalyticsCard stats={stats} loading={statsLoading} />
+      )}
     </div>
+  );
+}
+
+function AnalyticsCard({
+  stats,
+  loading,
+}: {
+  stats: Stats | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Carregando analytics...
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!stats) {
+    return (
+      <Card>
+        <CardContent className="py-6 text-sm text-muted-foreground">
+          Analytics indisponível.
+        </CardContent>
+      </Card>
+    );
+  }
+  const buckets = dailyBuckets(stats.recent);
+  const max = Math.max(1, ...buckets.map((b) => b.count));
+  const topRecent = stats.recent.slice(0, 8);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">📊 Analytics de scans</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap gap-6">
+          <div>
+            <p className="text-3xl font-bold">{stats.total}</p>
+            <p className="text-xs text-muted-foreground">scans totais</p>
+          </div>
+          <div>
+            <p className="text-sm font-medium">
+              {relTime(stats.lastScan)}
+            </p>
+            <p className="text-xs text-muted-foreground">último scan</p>
+          </div>
+        </div>
+
+        {/* barras últimos 14 dias */}
+        <div>
+          <p className="mb-2 text-xs text-muted-foreground">Últimos 14 dias</p>
+          <div className="flex h-20 items-end gap-1">
+            {buckets.map((b) => (
+              <div
+                key={b.day}
+                title={`${b.label}: ${b.count}`}
+                className="flex-1 rounded-t bg-primary/70 transition-all hover:bg-primary"
+                style={{ height: `${(b.count / max) * 100}%`, minHeight: b.count ? 4 : 0 }}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* recentes */}
+        {topRecent.length > 0 && (
+          <div>
+            <p className="mb-2 text-xs text-muted-foreground">Scans recentes</p>
+            <div className="space-y-1">
+              {topRecent.map((ev, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between rounded-md bg-muted/50 px-2 py-1 text-xs"
+                >
+                  <span className="flex items-center gap-2">
+                    <span>{flag(ev.country)}</span>
+                    <span className="text-muted-foreground">
+                      {ev.country ?? "—"}
+                    </span>
+                  </span>
+                  <span className="text-muted-foreground">
+                    {new Date(ev.ts).toLocaleString("pt-BR", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Badge({
+  icon,
+  label,
+  tone,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  tone: "primary" | "muted" | "destructive";
+}) {
+  const tones = {
+    primary: "bg-primary/10 text-primary",
+    muted: "bg-muted text-muted-foreground",
+    destructive: "bg-destructive/10 text-destructive",
+  };
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${tones[tone]}`}
+    >
+      {icon}
+      {label}
+    </span>
   );
 }

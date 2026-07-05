@@ -94,4 +94,11 @@ export const api = {
     req<{ ok: boolean }>(token, `/api/qrcodes/${id}`, {
       method: "DELETE",
     }),
+
+  getStats: (token: string, id: string) =>
+    req<{
+      total: number;
+      recent: { ts: string; ua: string; country: string | null }[];
+      lastScan: string | null;
+    }>(token, `/api/stats/${id}`),
 };

@@ -195,7 +195,7 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   // Redirect público: /r/:id (quem escaneia o QR dinâmico cai aqui)
   const redirectMatch = /^\/r\/([a-z0-9]{4,16})$/i.exec(path);
-  if (redirectMatch && request.method === "GET") {
+  if (redirectMatch && (request.method === "GET" || request.method === "POST")) {
     return handleRedirect(redirectMatch[1], env, request);
   }
 
@@ -266,10 +266,31 @@ async function handleRedirect(
     return htmlStatus(410, "Este QR code expirou", "O prazo de validade acabou.");
   }
 
-  // Registra o scan (best-effort; falha não quebram o redirect).
-  await logScan(env, id, request).catch(() => {});
-
   const target = row.payload;
+
+  // QR protegido por senha: GET mostra o form, POST verifica.
+  if (row.password_hash) {
+    if (request.method === "POST") {
+      const form = await request.formData().catch(() => null);
+      const pw = (form?.get("password") as string) ?? "";
+      const ok = await verifyPassword(pw, row.password_hash).catch(() => false);
+      if (!ok) {
+        return htmlPassword(id, "Senha incorreta. Tente novamente.");
+      }
+      await logScan(env, id, request).catch(() => {});
+      if (/^https?:\/\//i.test(target)) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: target, "Cache-Control": "no-store" },
+        });
+      }
+      return htmlLanding(target);
+    }
+    return htmlPassword(id);
+  }
+
+  // Sem senha: registra o scan e redireciona.
+  await logScan(env, id, request).catch(() => {});
   if (/^https?:\/\//i.test(target)) {
     return new Response(null, {
       status: 302,
@@ -320,6 +341,43 @@ async function logScan(env: Env, id: string, request: Request): Promise<void> {
   await env.QR_ANALYTICS.put(recentKey, JSON.stringify(recent.slice(0, 100)));
 }
 
+/** Verifica uma senha contra o formato pbkdf2$iter$salt$hash (gerado no cliente). */
+async function verifyPassword(
+  password: string,
+  stored: string,
+): Promise<boolean> {
+  const parts = stored.split("$");
+  if (parts.length !== 4 || parts[0] !== "pbkdf2") return false;
+  const iterations = parseInt(parts[1], 10);
+  if (!Number.isFinite(iterations) || iterations <= 0) return false;
+  const salt = b64ToBytes(parts[2]);
+  const expected = b64ToBytes(parts[3]);
+  const baseKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    baseKey,
+    256,
+  );
+  const got = new Uint8Array(bits);
+  if (got.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < got.length; i++) diff |= got[i] ^ expected[i];
+  return diff === 0;
+}
+
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 async function handleStats(
   id: string,
   env: Env,
@@ -356,6 +414,14 @@ function htmlStatus(
 
 function htmlLanding(content: string): Response {
   return new Response(renderLanding(content), {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+/** Página de senha para QRs dinâmicos protegidos. */
+function htmlPassword(id: string, error?: string): Response {
+  return new Response(renderPassword(id, error), {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
@@ -401,6 +467,40 @@ function renderLanding(content: string): string {
   <h1>Conteúdo</h1>
   <pre>${safe}</pre>
 </main></body></html>`;
+}
+
+function renderPassword(id: string, error?: string): string {
+  const err = error
+    ? `<p style="color:#f87171;margin:.5rem 0 0;font-size:.9rem">${error.replace(/</g, "&lt;")}</p>`
+    : "";
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Acesso protegido</title>
+<style>
+  :root{color-scheme:light dark}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+       font-family:system-ui,-apple-system,sans-serif;padding:1.5rem;text-align:center;
+       background:#0f172a;color:#e2e8f0}
+  form{max-width:340px;width:100%}
+  .icon{width:56px;height:56px;margin:0 auto 1rem;border-radius:14px;
+        background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:26px}
+  h1{font-size:1.25rem;margin:0 0 .25rem}
+  p.sub{color:#94a3b8;margin:0 0 1rem;font-size:.9rem}
+  input{width:100%;box-sizing:border-box;padding:.75rem;border-radius:8px;border:1px solid #334155;
+        background:#1e293b;color:#e2e8f0;font-size:1rem;text-align:center}
+  button{margin-top:.75rem;width:100%;padding:.75rem;border:0;border-radius:8px;cursor:pointer;
+         background:#6366f1;color:#fff;font-size:1rem;font-weight:600}
+  button:hover{background:#4f46e5}
+</style></head><body>
+  <form method="POST" action="/r/${id}" autocomplete="off">
+    <div class="icon">🔒</div>
+    <h1>Acesso protegido</h1>
+    <p class="sub">Digite a senha para continuar.</p>
+    <input type="password" name="password" autofocus required>
+    <button type="submit">Acessar</button>
+    ${err}
+  </form>
+</body></html>`;
 }
 
 // ---------- token exchange ----------

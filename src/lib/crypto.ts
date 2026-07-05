@@ -138,9 +138,9 @@ export async function hashPassword(
     ["deriveBits"],
   );
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: bs(salt), iterations: 150_000, hash: "SHA-256" },
+    { name: "PBKDF2", salt: bs(salt), iterations: 100_000, hash: "SHA-256" },
     baseKey,
     256,
   );
-  return `pbkdf2$150000$${toBase64(salt)}$${toBase64(new Uint8Array(bits))}`;
+  return `pbkdf2$100000$${toBase64(salt)}$${toBase64(new Uint8Array(bits))}`;
 }
