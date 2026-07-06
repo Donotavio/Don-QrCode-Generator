@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { Tabs } from "@/components/ui/tabs";
+import { useToast } from "@/components/ui/toast";
 import { generateId, hashPassword } from "@/lib/crypto";
 import { useQRCodes, dynamicRedirectUrl } from "@/lib/use-qrcodes";
 import {
@@ -32,6 +33,7 @@ export function Generator() {
   const { id } = useParams();
   const editId = id && id.length > 0 ? id : null;
   const navigate = useNavigate();
+  const { toast } = useToast();
   const { qrcodes, create, update } = useQRCodes();
   const qrRef = useRef<QrPreviewHandle>(null);
 
@@ -163,13 +165,15 @@ export function Generator() {
       };
       if (editId) {
         await update(editId, draft);
+        toast("QR code atualizado!", "success");
         navigate(`/q/${editId}`);
       } else {
         const newId = await create(draft);
+        toast("QR code criado!", "success");
         navigate(`/q/${newId}`);
       }
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erro ao salvar.");
+      toast(e instanceof Error ? e.message : "Erro ao salvar.", "error");
     } finally {
       setSaving(false);
     }

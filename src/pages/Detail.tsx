@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useToast } from "@/components/ui/toast";
 import { useQRCodes, qrEncodedString } from "@/lib/use-qrcodes";
 import { DEFAULT_STYLE, KIND_LABELS, type QrStyleConfig } from "@/lib/qr-builder";
 
@@ -65,6 +66,7 @@ export function Detail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { token } = useAuth();
+  const { toast } = useToast();
   const { qrcodes, loading, remove } = useQRCodes();
   const qrRef = useRef<QrPreviewHandle>(null);
   const [confirming, setConfirming] = useState(false);
@@ -121,7 +123,10 @@ export function Detail() {
   const style = { ...DEFAULT_STYLE, ...(qr.styling as Partial<QrStyleConfig>) };
 
   const copy = () => {
-    navigator.clipboard?.writeText(qr.payload).catch(() => {});
+    navigator.clipboard?.writeText(qr.payload).then(
+      () => toast("Conteúdo copiado!", "success"),
+      () => toast("Não foi possível copiar.", "error"),
+    );
   };
 
   const onDelete = async () => {
@@ -129,8 +134,13 @@ export function Detail() {
       setConfirming(true);
       return;
     }
-    await remove(qr.id);
-    navigate("/dashboard");
+    try {
+      await remove(qr.id);
+      toast("QR code excluído.", "success");
+      navigate("/dashboard");
+    } catch {
+      toast("Erro ao excluir.", "error");
+    }
   };
 
   return (

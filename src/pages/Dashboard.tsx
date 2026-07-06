@@ -17,6 +17,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Select } from "@/components/ui/field";
+import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/lib/auth";
 import { KIND_LABELS, type QRKind } from "@/lib/qr-builder";
 import { useQRCodes } from "@/lib/use-qrcodes";
@@ -29,6 +30,7 @@ const KINDS = Object.keys(KIND_LABELS) as QRKind[];
 export function Dashboard() {
   const { user } = useAuth();
   const { qrcodes, loading, error, create, remove } = useQRCodes();
+  const { toast } = useToast();
   const navigate = useNavigate();
 
   const [query, setQuery] = useState("");
@@ -82,19 +84,29 @@ export function Dashboard() {
       return;
     }
     setConfirmId(null);
-    await remove(id);
+    try {
+      await remove(id);
+      toast("QR code excluído.", "success");
+    } catch {
+      toast("Erro ao excluir.", "error");
+    }
   };
 
   const duplicate = async (qr: (typeof qrcodes)[number]) => {
-    const id = await create({
-      type: qr.type,
-      kind: qr.kind,
-      title: `${qr.title} (cópia)`,
-      tags: qr.tags,
-      payload: qr.payload,
-      styling: qr.styling,
-    });
-    navigate(`/q/${id}`);
+    try {
+      const id = await create({
+        type: qr.type,
+        kind: qr.kind,
+        title: `${qr.title} (cópia)`,
+        tags: qr.tags,
+        payload: qr.payload,
+        styling: qr.styling,
+      });
+      toast("QR duplicado!", "success");
+      navigate(`/q/${id}`);
+    } catch {
+      toast("Erro ao duplicar.", "error");
+    }
   };
 
   const hasFilters = query || kind !== "all" || typeFilter !== "all" || tag !== "all";
